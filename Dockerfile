@@ -171,6 +171,16 @@ COPY --from=builder ${PYTHON_SITE_PACKAGES} ${PYTHON_SITE_PACKAGES}
 COPY --from=builder /usr/local/bin/headroom /usr/local/bin/headroom
 # Native Rust reverse proxy binary (issue #976).
 COPY --from=builder /usr/local/bin/headroom-proxy /usr/local/bin/headroom-proxy
+# ast-grep ships real binaries rather than importable Python, so
+# `uv pip install --system` puts `ast-grep` in the builder's bin dir. This
+# stage copies /usr/local/bin entries one at a time, so the binary has to
+# be listed explicitly: without it the image still ships the ast-grep-cli
+# dist-info (so `pip list` reports the tool installed) but has no binary
+# behind it, and `proxy --intercept-tool-results` refuses to start
+# (#3649) -- the same whitelist-COPY class as #976 above. Only `ast-grep`:
+# the wheel's `sg` alias would shadow /usr/bin/sg (shadow-utils), and
+# headroom resolves the tool by the name `ast-grep`.
+COPY --from=builder /usr/local/bin/ast-grep /usr/local/bin/ast-grep
 
 RUN mkdir -p /home/nonroot /data && \
     if [ "$RUNTIME_USER" = "nonroot" ]; then \
@@ -212,6 +222,10 @@ ARG PYTHON_SITE_PACKAGES
 COPY --from=builder ${PYTHON_SITE_PACKAGES} ${PYTHON_SITE_PACKAGES}
 # Native Rust reverse proxy binary (issue #976).
 COPY --from=builder /usr/local/bin/headroom-proxy /usr/local/bin/headroom-proxy
+# ast-grep binary from its PyPI wheel; see runtime-slim-base for why this
+# stage has to list it. Only `ast-grep` -- the wheel's `sg` alias would
+# shadow /usr/bin/sg (shadow-utils) on the default PATH.
+COPY --from=builder /usr/local/bin/ast-grep /usr/local/bin/ast-grep
 
 USER ${RUNTIME_USER}
 WORKDIR /app
