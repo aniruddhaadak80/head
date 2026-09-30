@@ -694,19 +694,31 @@ fn parse_match_line(line: &str) -> Option<(&str, u64, &str)> {
     // matches and a path practically never contains a colon. It yields in
     // exactly one shape — a `-`-separated context line whose body carries a
     // whitespace-free `name:N:` reference (`app.py-476-a:7:b`). The dash tier
-    // proved a boundary *before* the colon marker and nothing path-like sits
-    // between the two, so that colon triplet is body text, not a marker.
+    // *positively confirmed* a boundary before the colon marker, so that colon
+    // triplet is body text, not a marker.
     //
     // Without the hand-off the body's number is read as the line number, the
     // path swallows the real `-N-`, and the model is shown a file that does not
     // exist holding content attributed to a line it never came from
     // (issue #3545). The whitespace guard inside the colon tier cannot catch
     // this, because the body ahead of the reference need not contain any.
+    //
+    // The `true` in the dash arm is load-bearing, and it is the *whole* test.
+    // A confirmed boundary means the dash tier saw the path end there — either
+    // the segment carried an extension (`app.py-476-`) or nothing after the
+    // marker looked like path structure (`CHANGELOG-12-`) — so the bytes from
+    // the closing dash onwards are body text and may look like anything. Bodies
+    // routinely carry a filename-style reference of their own
+    // (`app.py-476-foo.rs:12:ref`), and an extension dot there says nothing
+    // about where the path ended.
+    //
+    // The rows that must keep the colon tier are the ones where the dash tier
+    // could *not* confirm: `logs/2026-05-03/app.log:12:ERROR` and
+    // `migrations/20240101-002-add_users.sql:12:SELECT` both leave the digits
+    // inside the path, so the flag is false and the hand-off never applies. See
+    // [`path_continues`], which is what decides the flag.
     let dash_overrides = match (colon, dash) {
-        (Some((colon_marker, _)), Some((dash_marker, true))) => {
-            colon_marker.0 > dash_marker.2
-                && !path_structure_between(line, dash_marker.2 + 1, colon_marker.0)
-        }
+        (Some((colon_marker, _)), Some((dash_marker, true))) => colon_marker.0 > dash_marker.2,
         _ => false,
     };
 
@@ -795,18 +807,6 @@ fn build_match(line: &str, marker: Marker) -> Option<(&str, u64, &str)> {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())?;
     Some((&line[..path_end], line_no, &line[digits_end + 1..]))
-}
-
-/// True when `line[from..to]` still reads as path structure — a separator or an
-/// extension dot — rather than as body text.
-fn path_structure_between(line: &str, from: usize, to: usize) -> bool {
-    let (from, to) = if from <= to { (from, to) } else { (to, from) };
-    match line.get(from..to) {
-        Some(segment) => {
-            segment.contains('/') || segment.contains('\\') || has_extension_dot(segment)
-        }
-        None => false,
-    }
 }
 
 /// Scan `line` under `tier`, returning the marker it settled on plus whether
@@ -991,6 +991,27 @@ mod tests {
         assert_eq!(
             parse_line("CHANGELOG-12-a:99:b"),
             Some(("CHANGELOG".into(), 12, "a:99:b".into()))
+        );
+        // A body reference that looks like a *filename* is the canonical form
+        // the hand-off used to miss. `app.py-476-foo.rs:12:ref` is a context
+        // row for `app.py` line 476 whose body is `foo.rs:12:ref`. The dash
+        // tier confirms the boundary (the segment carries an extension), so the
+        // extension dot inside the body must not veto it — before the fix the
+        // colon tier reclaimed the row as path `app.py-476-foo.rs`, line 12.
+        assert_eq!(
+            parse_line("app.py-476-foo.rs:12:ref"),
+            Some(("app.py".into(), 476, "foo.rs:12:ref".into()))
+        );
+        // Same shape behind a directory, and with a Windows separator in the
+        // body reference.
+        assert_eq!(
+            parse_line("pkg/server.ts-91-lib/index.js:7:import"),
+            Some(("pkg/server.ts".into(), 91, "lib/index.js:7:import".into()))
+        );
+        // The body may even be a bare path with no reference at all.
+        assert_eq!(
+            parse_line("app.py-476-./vendor/other.py"),
+            Some(("app.py".into(), 476, "./vendor/other.py".into()))
         );
         // A colon row whose *path* holds the dash triplet is untouched: the
         // dash tier never confirmed a boundary there, so the colon tier wins.

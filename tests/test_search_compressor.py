@@ -158,6 +158,50 @@ class TestContextLineBodyReference:
         assert matches[0].line_number == 12
         assert matches[0].content == "ERROR"
 
+    def test_filename_style_body_reference_keeps_the_context_coordinates(self):
+        """A body reference that looks like a *filename* must not take the row.
+
+        ``app.py-476-foo.rs:12:ref`` is a ripgrep context row for ``app.py``
+        line 476 whose body is ``foo.rs:12:ref``. The dash tier confirms the
+        boundary (the segment carries an extension), so the extension dot
+        inside the body says nothing about where the path ended. Before the
+        fix the colon tier reclaimed the row as the nonexistent path
+        ``app.py-476-foo.rs`` at line 12.
+        """
+        content = "app.py-476-foo.rs:12:ref"
+        compressor = SearchCompressor()
+        file_matches = compressor._parse_search_results(content)
+
+        assert list(file_matches) == ["app.py"]
+        matches = file_matches["app.py"].matches
+        assert len(matches) == 1
+        assert matches[0].line_number == 476
+        assert matches[0].content == "foo.rs:12:ref"
+
+    def test_filename_style_body_reference_behind_a_directory(self):
+        """Same shape with a directory component, which also looks path-like."""
+        content = "pkg/server.ts-91-lib/index.js:7:import"
+        compressor = SearchCompressor()
+        file_matches = compressor._parse_search_results(content)
+
+        assert list(file_matches) == ["pkg/server.ts"]
+        matches = file_matches["pkg/server.ts"].matches
+        assert len(matches) == 1
+        assert matches[0].line_number == 91
+        assert matches[0].content == "lib/index.js:7:import"
+
+    def test_bare_path_body_keeps_the_context_coordinates(self):
+        """The body needs no reference at all to be path-like."""
+        content = "app.py-476-./vendor/other.py"
+        compressor = SearchCompressor()
+        file_matches = compressor._parse_search_results(content)
+
+        assert list(file_matches) == ["app.py"]
+        matches = file_matches["app.py"].matches
+        assert len(matches) == 1
+        assert matches[0].line_number == 476
+        assert matches[0].content == "./vendor/other.py"
+
     def test_many_context_rows_keep_their_own_coordinates(self):
         """Every coordinate an agent would act on survives across many rows."""
         content = "\n".join(f"pkg/mod/file.py-{476 + i * 7}-hits:{i}:of:9" for i in range(12))
