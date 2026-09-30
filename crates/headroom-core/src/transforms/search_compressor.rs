@@ -803,9 +803,7 @@ type Marker = (usize, usize, usize);
 /// Assemble `(file, line_number, content)` from a marker's byte offsets.
 fn build_match(line: &str, marker: Marker) -> Option<(&str, u64, &str)> {
     let (path_end, digits_start, digits_end) = marker;
-    let line_no = std::str::from_utf8(&line.as_bytes()[digits_start..digits_end])
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())?;
+    let line_no = line[digits_start..digits_end].parse::<u64>().ok()?;
     Some((&line[..path_end], line_no, &line[digits_end + 1..]))
 }
 
